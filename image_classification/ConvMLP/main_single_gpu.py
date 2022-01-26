@@ -1,5 +1,4 @@
-
-#   Copyright (c) 2021 PPViT Authors. All Rights Reserved.
+# Copyright (c) 2021 PPViT Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -35,8 +34,6 @@ from config import update_config
 from mixup import Mixup
 from losses import LabelSmoothingCrossEntropyLoss
 from losses import SoftTargetCrossEntropyLoss
-from losses import DistillationLoss
-from model_ema import ModelEma
 from convmlp import build_convmlp as build_model
 
 
@@ -48,7 +45,9 @@ def get_arguments():
     parser.add_argument('-batch_size', type=int, default=None)
     parser.add_argument('-image_size', type=int, default=None)
     parser.add_argument('-data_path', type=str, default=None)
+    parser.add_argument('-output', type=str, default=None)
     parser.add_argument('-ngpus', type=int, default=None)
+    parser.add_argument('-num_classes', type=int, default=None)
     parser.add_argument('-pretrained', type=str, default=None)
     parser.add_argument('-resume', type=str, default=None)
     parser.add_argument('-last_epoch', type=int, default=None)
@@ -86,7 +85,6 @@ def train(dataloader,
           total_batch,
           debug_steps=100,
           accum_iter=1,
-          model_ema=None,
           mixup_fn=None,
           amp=False,
           logger=None):
@@ -100,7 +98,6 @@ def train(dataloader,
         total_batch: int, total num of batches for one epoch
         debug_steps: int, num of iters to log info, default: 100
         accum_iter: int, num of iters for accumulating gradients, default: 1
-        model_ema: ModelEma, model moving average instance
         mixup_fn: Mixup, mixup instance, default: None
         amp: bool, if True, use mix precision training, default: False
         logger: logger for logging, default: None
@@ -146,9 +143,6 @@ def train(dataloader,
             if ((batch_id +1) % accum_iter == 0) or (batch_id + 1 == len(dataloader)):
                 optimizer.step()
                 optimizer.clear_grad()
-
-        if model_ema is not None:
-            model_ema.update(model)
 
         pred = F.softmax(output)
         if mixup_fn:
@@ -243,15 +237,12 @@ def main():
 
     # STEP 1: Create model
     model = build_model(config)
-    # define model ema
-    model_ema = None
-    if not config.EVAL and config.TRAIN.MODEL_EMA:
-        model_ema = ModelEma(model, decay=config.TRAIN.MODEL_EMA_DECAY)
 
     # STEP 2: Create train and val dataloader
-    dataset_train = get_dataset(config, mode='train')
+    if not config.EVAL:
+        dataset_train = get_dataset(config, mode='train')
+        dataloader_train = get_dataloader(config, dataset_train, 'train', False)
     dataset_val = get_dataset(config, mode='val')
-    dataloader_train = get_dataloader(config, dataset_train, 'train', False)
     dataloader_val = get_dataloader(config, dataset_val, 'val', False)
 
     # STEP 3: Define Mixup function
@@ -341,10 +332,7 @@ def main():
             beta2=config.TRAIN.OPTIMIZER.BETAS[1],
             weight_decay=config.TRAIN.WEIGHT_DECAY,
             epsilon=config.TRAIN.OPTIMIZER.EPS,
-            grad_clip=clip,
-            apply_decay_param_fun=get_exclude_from_weight_decay_fn([
-                'absolute_pos_embed', 'relative_position_bias_table']),
-            )
+            grad_clip=clip)
     else:
         logger.fatal(f"Unsupported Optimizer: {config.TRAIN.OPTIMIZER.NAME}.")
         raise NotImplementedError(f"Unsupported Optimizer: {config.TRAIN.OPTIMIZER.NAME}.")
@@ -363,16 +351,11 @@ def main():
         assert os.path.isfile(config.MODEL.RESUME + '.pdopt') is True
         model_state = paddle.load(config.MODEL.RESUME + '.pdparams')
         model.set_dict(model_state)
-        opt_state = paddle.load(config.MODEL.RESUME+'.pdopt')
+        opt_state = paddle.load(config.MODEL.RESUME + '.pdopt')
         optimizer.set_state_dict(opt_state)
         logger.info(
-            f"----- Resume Training: Load model and optmizer from {config.MODEL.RESUME}")
-        # load ema model
-        if model_ema is not None and os.path.isfile(config.MODEL.RESUME + '-EMA.pdparams'):
-            model_ema_state = paddle.load(config.MODEL.RESUME + '-EMA.pdparams')
-            model_ema.module.set_state_dict(model_ema_state)
-            logger.info(f'----- Load model ema from {config.MODEL.RESUME}-EMA.pdparams')
-    
+            f"----- Resume: Load model and optmizer from {config.MODEL.RESUME}")
+
     # STEP 7: Validation (eval mode)
     if config.EVAL:
         logger.info('----- Start Validating')
@@ -403,7 +386,6 @@ def main():
                                                   total_batch=len(dataloader_train),
                                                   debug_steps=config.REPORT_FREQ,
                                                   accum_iter=config.TRAIN.ACCUM_ITER,
-                                                  model_ema=model_ema,
                                                   mixup_fn=mixup_fn,
                                                   amp=config.AMP,
                                                   logger=logger)
@@ -435,11 +417,6 @@ def main():
             paddle.save(optimizer.state_dict(), model_path + '.pdopt')
             logger.info(f"----- Save model: {model_path}.pdparams")
             logger.info(f"----- Save optim: {model_path}.pdopt")
-            if model_ema is not None:
-                model_ema_path = os.path.join(
-                    config.SAVE, f"{config.MODEL.TYPE}-Epoch-{epoch}-Loss-{train_loss}-EMA")
-                paddle.save(model_ema.state_dict(), model_ema_path + '.pdparams')
-                logger.info(f"----- Save ema model: {model_ema_path}.pdparams")
 
 
 if __name__ == "__main__":

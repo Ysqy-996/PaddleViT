@@ -35,7 +35,6 @@ from config import update_config
 from mixup import Mixup
 from losses import LabelSmoothingCrossEntropyLoss
 from losses import SoftTargetCrossEntropyLoss
-from losses import DistillationLoss
 from focal_transformer import build_focal as build_model
 
 
@@ -49,7 +48,7 @@ def get_arguments():
     parser.add_argument('-num_classes', type=int, default=1000)
     parser.add_argument('-data_path', type=str, default=None)
 
-    parser.add_argument('-output', type=str, default='./output')
+    parser.add_argument('-output', type=str, default=None)
 
     parser.add_argument('-pretrained', type=str, default=None)
     parser.add_argument('-resume', type=str, default=None)
@@ -142,7 +141,7 @@ def train(dataloader,
         if amp is True: # mixed precision training
             with paddle.amp.auto_cast():
                 output = model(image)
-                loss = criterion(image, output, label)
+                loss = criterion(output, label)
             scaled = scaler.scale(loss)
             scaled.backward()
             if ((batch_id +1) % accum_iter == 0) or (batch_id + 1 == len(dataloader)):
@@ -331,14 +330,18 @@ def main_worker(*args):
 
     # STEP 2: Create train and val dataloader
     dataset_train, dataset_val = args[1], args[2]
-    dataloader_train = get_dataloader(config, dataset_train, 'train', True)
+    # Create training dataloader
+    if not config.EVAL:
+        dataloader_train = get_dataloader(config, dataset_train, 'train', True)
+        total_batch_train = len(dataloader_train)
+        local_logger.info(f'----- Total # of train batch (single gpu): {total_batch_train}')
+        if local_rank == 0:
+            master_logger.info(f'----- Total # of train batch (single gpu): {total_batch_train}')
+    # Create validation dataloader
     dataloader_val = get_dataloader(config, dataset_val, 'test', True)
-    total_batch_train = len(dataloader_train)
     total_batch_val = len(dataloader_val)
-    local_logger.info(f'----- Total # of train batch (single gpu): {total_batch_train}')
     local_logger.info(f'----- Total # of val batch (single gpu): {total_batch_val}')
     if local_rank == 0:
-        master_logger.info(f'----- Total # of train batch (single gpu): {total_batch_train}')
         master_logger.info(f'----- Total # of val batch (single gpu): {total_batch_val}')
 
     # STEP 3: Define Mixup function
@@ -364,22 +367,23 @@ def main_worker(*args):
     criterion_val = nn.CrossEntropyLoss()
 
     # STEP 5: Define optimizer and lr_scheduler
-    # set lr according to batch size and world size (hacked from official code)
-    linear_scaled_lr = (config.TRAIN.BASE_LR *
-        config.DATA.BATCH_SIZE * dist.get_world_size()) / 512.0
-    linear_scaled_warmup_start_lr = (config.TRAIN.WARMUP_START_LR *
-        config.DATA.BATCH_SIZE * dist.get_world_size()) / 512.0
-    linear_scaled_end_lr = (config.TRAIN.END_LR *
-        config.DATA.BATCH_SIZE * dist.get_world_size()) / 512.0
-
-    if config.TRAIN.ACCUM_ITER > 1:
-        linear_scaled_lr = linear_scaled_lr * config.TRAIN.ACCUM_ITER
-        linear_scaled_warmup_start_lr = linear_scaled_warmup_start_lr * config.TRAIN.ACCUM_ITER
-        linear_scaled_end_lr = linear_scaled_end_lr * config.TRAIN.ACCUM_ITER
+    # set lr according to batch size and world size (hacked from Swin official code and modified for CSwin)
+    if config.TRAIN.LINEAR_SCALED_LR is not None:
+        linear_scaled_lr = (
+            config.TRAIN.BASE_LR * config.DATA.BATCH_SIZE * world_size) / config.TRAIN.LINEAR_SCALED_LR
+        linear_scaled_warmup_start_lr = (
+            config.TRAIN.WARMUP_START_LR * config.DATA.BATCH_SIZE * world_size) / config.TRAIN.LINEAR_SCALED_LR
+        linear_scaled_end_lr = (
+            config.TRAIN.END_LR * config.DATA.BATCH_SIZE * world_size) / config.TRAIN.LINEAR_SCALED_LR
     
-    config.TRAIN.BASE_LR = linear_scaled_lr
-    config.TRAIN.WARMUP_START_LR = linear_scaled_warmup_start_lr
-    config.TRAIN.END_LR = linear_scaled_end_lr
+        if config.TRAIN.ACCUM_ITER > 1:
+            linear_scaled_lr = linear_scaled_lr * config.TRAIN.ACCUM_ITER
+            linear_scaled_warmup_start_lr = linear_scaled_warmup_start_lr * config.TRAIN.ACCUM_ITER
+            linear_scaled_end_lr = linear_scaled_end_lr * config.TRAIN.ACCUM_ITER
+        
+        config.TRAIN.BASE_LR = linear_scaled_lr
+        config.TRAIN.WARMUP_START_LR = linear_scaled_warmup_start_lr
+        config.TRAIN.END_LR = linear_scaled_end_lr
 
     scheduler = None
     if config.TRAIN.LR_SCHEDULER.NAME == "warmupcosine":
@@ -453,9 +457,9 @@ def main_worker(*args):
                 f"----- Pretrained: Load model state from {config.MODEL.PRETRAINED}")
 
     if config.MODEL.RESUME:
-        assert os.path.isfile(config.MODEL.RESUME+'.pdparams') is True
-        assert os.path.isfile(config.MODEL.RESUME+'.pdopt') is True
-        model_state = paddle.load(config.MODEL.RESUME+'.pdparams')
+        assert os.path.isfile(config.MODEL.RESUME + '.pdparams') is True
+        assert os.path.isfile(config.MODEL.RESUME + '.pdopt') is True
+        model_state = paddle.load(config.MODEL.RESUME + '.pdparams')
         model.set_dict(model_state)
         opt_state = paddle.load(config.MODEL.RESUME+'.pdopt')
         optimizer.set_state_dict(opt_state)
@@ -576,7 +580,10 @@ def main():
         os.makedirs(config.SAVE, exist_ok=True)
 
     # get dataset and start DDP
-    dataset_train = get_dataset(config, mode='train')
+    if not config.EVAL:
+        dataset_train = get_dataset(config, mode='train')
+    else:
+        dataset_train = None
     dataset_val = get_dataset(config, mode='val')
     config.NGPUS = len(paddle.static.cuda_places()) if config.NGPUS == -1 else config.NGPUS
     dist.spawn(main_worker, args=(config, dataset_train, dataset_val, ), nprocs=config.NGPUS)

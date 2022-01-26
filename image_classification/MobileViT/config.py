@@ -1,4 +1,4 @@
-#   Copyright (c) 2021 PPViT Authors. All Rights Reserved.
+# Copyright (c) 2021 PPViT Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -35,6 +35,8 @@ _C.DATA.DATASET = 'imagenet2012' # dataset name
 _C.DATA.IMAGE_SIZE = 224 # input image size
 _C.DATA.CROP_PCT = 0.9 # input image scale ratio, scale is applied before centercrop in eval mode
 _C.DATA.NUM_WORKERS = 4 # number of data loading threads
+_C.DATA.IMAGENET_MEAN = [0.485, 0.456, 0.406] # [0.5, 0.5, 0.5]
+_C.DATA.IMAGENET_STD = [0.229, 0.224, 0.225] # [0.5, 0.5, 0.5]
 
 # model settings
 _C.MODEL = CN()
@@ -72,6 +74,7 @@ _C.TRAIN.ACCUM_ITER = 1
 _C.TRAIN.MODEL_EMA = True
 _C.TRAIN.MODEL_EMA_DECAY = 0.99996
 _C.TRAIN.LINEAR_SCALED_LR = None
+_C.TRAIN.MULTI_SCALE_SAMPLER_DDP = True # for mobilevit only
 
 _C.TRAIN.LR_SCHEDULER = CN()
 _C.TRAIN.LR_SCHEDULER.NAME = 'warmupcosine'
@@ -154,17 +157,22 @@ def update_config(config, args):
     config.defrost()
     if args.dataset:
         config.DATA.DATASET = args.dataset
-    if args.batch_size:
-        config.DATA.BATCH_SIZE = args.batch_size
-    if args.image_size:
-        config.DATA.IMAGE_SIZE = args.image_size
-    if args.data_path:
-        config.DATA.DATA_PATH = args.data_path
-    if args.ngpus:
-        config.NGPUS = args.ngpus
     if args.eval:
         config.EVAL = True
-        config.DATA.BATCH_SIZE_EVAL = args.batch_size
+    if args.batch_size:
+        config.DATA.BATCH_SIZE = args.batch_size
+        if config.EVAL:
+            config.DATA.BATCH_SIZE_EVAL = args.batch_size
+    if args.image_size:
+        config.DATA.IMAGE_SIZE = args.image_size
+    if args.num_classes:
+        config.MODEL.NUM_CLASSES = args.num_classes
+    if args.data_path:
+        config.DATA.DATA_PATH = args.data_path
+    if args.output is not None:
+        config.SAVE = args.output
+    if args.ngpus:
+        config.NGPUS = args.ngpus
     if args.pretrained:
         config.MODEL.PRETRAINED = args.pretrained
     if args.resume:

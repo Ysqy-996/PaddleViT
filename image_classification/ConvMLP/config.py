@@ -1,4 +1,4 @@
-#   Copyright (c) 2021 PPViT Authors. All Rights Reserved.
+# Copyright (c) 2021 PPViT Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -36,6 +36,8 @@ _C.DATA.DATASET = 'imagenet2012' # dataset name
 _C.DATA.IMAGE_SIZE = 224 # input image size
 _C.DATA.CROP_PCT = 0.9 # input image scale ratio, scale is applied before centercrop in eval mode
 _C.DATA.NUM_WORKERS = 4 # number of data loading threads
+_C.DATA.IMAGENET_MEAN = [0.485, 0.456, 0.406] # [0.5, 0.5, 0.5]
+_C.DATA.IMAGENET_STD = [0.229, 0.224, 0.225] # [0.5, 0.5, 0.5]
 
 # model settings
 _C.MODEL = CN()
@@ -44,8 +46,9 @@ _C.MODEL.NAME = 'ConvMLP'
 _C.MODEL.RESUME = None
 _C.MODEL.PRETRAINED = None
 _C.MODEL.NUM_CLASSES = 1000
-_C.MODEL.DROPPATH = 0.
-_C.MODEL.DROPOUT = 0.
+_C.MODEL.DROPOUT = 0.0
+_C.MODEL.ATTENTION_DROPOUT = 0.0
+_C.MODEL.DROP_PATH = 0.1
 
 # transformer settings
 _C.MODEL.MIXER = CN()
@@ -61,13 +64,11 @@ _C.TRAIN.LAST_EPOCH = 0
 _C.TRAIN.NUM_EPOCHS = 300
 _C.TRAIN.WARMUP_EPOCHS = 20
 _C.TRAIN.WEIGHT_DECAY = 0.05
-_C.TRAIN.BASE_LR = 5e-4
+_C.TRAIN.BASE_LR = 0.001
 _C.TRAIN.WARMUP_START_LR = 5e-7
 _C.TRAIN.END_LR = 5e-6
 _C.TRAIN.GRAD_CLIP = 5.0
 _C.TRAIN.ACCUM_ITER = 1
-_C.TRAIN.MODEL_EMA = True
-_C.TRAIN.MODEL_EMA_DECAY = 0.99996
 _C.TRAIN.LINEAR_SCALED_LR = None
 
 _C.TRAIN.LR_SCHEDULER = CN()
@@ -92,36 +93,23 @@ _C.TRAIN.MIXUP_MODE = 'batch'
 
 _C.TRAIN.SMOOTHING = 0.1
 _C.TRAIN.COLOR_JITTER = 0.4
-_C.TRAIN.AUTO_AUGMENT = True #'rand-m9-mstd0.5-inc1'
+_C.TRAIN.AUTO_AUGMENT = False #'rand-m9-mstd0.5-inc1'
+_C.TRAIN.RAND_AUGMENT = False
 
 _C.TRAIN.RANDOM_ERASE_PROB = 0.25
 _C.TRAIN.RANDOM_ERASE_MODE = 'pixel'
 _C.TRAIN.RANDOM_ERASE_COUNT = 1
 _C.TRAIN.RANDOM_ERASE_SPLIT = False
 
-# augmentation
-_C.AUG = CN()
-_C.AUG.COLOR_JITTER = 0.4 # color jitter factor
-_C.AUG.AUTO_AUGMENT = 'rand-m9-mstd0.5-inc1'
-_C.AUG.RE_PROB = 0.25 # random earse prob
-_C.AUG.RE_MODE = 'pixel' # random earse mode
-_C.AUG.RE_COUNT = 1 # random earse count
-_C.AUG.MIXUP = 0.8 # mixup alpha, enabled if >0
-_C.AUG.CUTMIX = 1.0 # cutmix alpha, enabled if >0
-_C.AUG.CUTMIX_MINMAX = None # cutmix min/max ratio, overrides alpha
-_C.AUG.MIXUP_PROB = 1.0 # prob of mixup or cutmix when either/both is enabled
-_C.AUG.MIXUP_SWITCH_PROB = 0.5 # prob of switching cutmix when both mixup and cutmix enabled
-_C.AUG.MIXUP_MODE = 'batch' #how to apply mixup/curmix params, per 'batch', 'pair', or 'elem'
-
 # misc
 _C.SAVE = "./output"
 _C.TAG = "default"
 _C.SAVE_FREQ = 1 # freq to save chpt
 _C.REPORT_FREQ = 50 # freq to logging info
-_C.VALIDATE_FREQ = 10 # freq to do validation
+_C.VALIDATE_FREQ = 20 # freq to do validation
 _C.SEED = 0
 _C.EVAL = False # run evaluation only
-_C.AMP = False
+_C.AMP = False # mix precision training
 _C.LOCAL_RANK = 0
 _C.NGPUS = -1
 
@@ -151,17 +139,22 @@ def update_config(config, args):
     config.defrost()
     if args.dataset:
         config.DATA.DATASET = args.dataset
-    if args.batch_size:
-        config.DATA.BATCH_SIZE = args.batch_size
-    if args.image_size:
-        config.DATA.IMAGE_SIZE = args.image_size
-    if args.data_path:
-        config.DATA.DATA_PATH = args.data_path
-    if args.ngpus:
-        config.NGPUS = args.ngpus
     if args.eval:
         config.EVAL = True
-        config.DATA.BATCH_SIZE_EVAL = args.batch_size
+    if args.batch_size:
+        config.DATA.BATCH_SIZE = args.batch_size
+        if config.EVAL:
+            config.DATA.BATCH_SIZE_EVAL = args.batch_size
+    if args.image_size:
+        config.DATA.IMAGE_SIZE = args.image_size
+    if args.num_classes:
+        config.MODEL.NUM_CLASSES = args.num_classes
+    if args.data_path:
+        config.DATA.DATA_PATH = args.data_path
+    if args.output is not None:
+        config.SAVE = args.output
+    if args.ngpus:
+        config.NGPUS = args.ngpus
     if args.pretrained:
         config.MODEL.PRETRAINED = args.pretrained
     if args.resume:

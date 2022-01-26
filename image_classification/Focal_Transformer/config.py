@@ -37,6 +37,8 @@ _C.DATA.DATASET = 'imagenet2012' # dataset name
 _C.DATA.IMAGE_SIZE = 224 # input image size
 _C.DATA.CROP_PCT = 0.875 # input image scale ratio, scale is applied before centercrop in eval mode
 _C.DATA.NUM_WORKERS = 4 # number of data loading threads
+_C.DATA.IMAGENET_MEAN = [0.485, 0.456, 0.406] # [0.5, 0.5, 0.5]
+_C.DATA.IMAGENET_STD = [0.229, 0.224, 0.225] # [0.5, 0.5, 0.5]
 
 
 # -----------------------------------------------------------------------------
@@ -94,9 +96,9 @@ _C.TRAIN.WEIGHT_DECAY = 0.05
 _C.TRAIN.BASE_LR = 5e-4
 _C.TRAIN.WARMUP_START_LR = 5e-7
 _C.TRAIN.END_LR = 5e-6
-_C.TRAIN.GRAD_CLIP = 5.0 # Clip gradient norm
-_C.TRAIN.ACCUM_ITER = 1 # Gradient accumulation steps
-
+_C.TRAIN.GRAD_CLIP = 5.0
+_C.TRAIN.ACCUM_ITER = 1
+_C.TRAIN.LINEAR_SCALED_LR = None
 
 # LR scheduler
 _C.TRAIN.LR_SCHEDULER = CN()
@@ -126,7 +128,8 @@ _C.TRAIN.MIXUP_MODE = 'batch'
 
 _C.TRAIN.SMOOTHING = 0.1
 _C.TRAIN.COLOR_JITTER = 0.4
-_C.TRAIN.AUTO_AUGMENT = True #'rand-m9-mstd0.5-inc1'
+_C.TRAIN.AUTO_AUGMENT = False #'rand-m9-mstd0.5-inc1'
+_C.TRAIN.RAND_AUGMENT = False
 
 _C.TRAIN.RANDOM_ERASE_PROB = 0.25
 _C.TRAIN.RANDOM_ERASE_MODE = 'pixel' # How to apply mixup/cutmix params. Per "batch", "pair", or "elem"
@@ -177,32 +180,35 @@ def update_config(config, args):
     Return:
         config: updated config
     """
-    _update_config_from_file(config, args.cfg)
-
+    if args.cfg:
+        _update_config_from_file(config, args.cfg)
     config.defrost()
     # merge from specific arguments
     if args.dataset:
         config.DATA.DATASET = args.dataset
+    if args.eval:
+        config.EVAL = True
     if args.batch_size:
         config.DATA.BATCH_SIZE = args.batch_size
+        if config.EVAL:
+            config.DATA.BATCH_SIZE_EVAL = args.batch_size
     if args.image_size:
         config.DATA.IMAGE_SIZE = args.image_size
     if args.num_classes:
         config.MODEL.NUM_CLASSES = args.num_classes
     if args.data_path:
         config.DATA.DATA_PATH = args.data_path
+    if args.output is not None:
+        config.SAVE = args.output
     if args.ngpus:
         config.NGPUS = args.ngpus
-    if args.eval:
-        config.EVAL = True
-        config.DATA.BATCH_SIZE_EVAL = args.batch_size
     if args.pretrained:
         config.MODEL.PRETRAINED = args.pretrained
     if args.resume:
         config.MODEL.RESUME = args.resume
     if args.last_epoch:
         config.TRAIN.LAST_EPOCH = args.last_epoch
-    if args.output:
+    if args.output is not None:
         config.SAVE = args.output 
     if args.save_freq:
         config.SAVE_FREQ = args.save_freq

@@ -68,8 +68,8 @@ class PatchEmbedding(nn.Layer):
                                  bias_attr=b_attr)
 
     def _init_weights_layernorm(self):
-        weight_attr = paddle.ParamAttr(initializer=paddle.nn.initializer.Constant(1))
-        bias_attr = paddle.ParamAttr(initializer=paddle.nn.initializer.Constant(0))
+        weight_attr = paddle.ParamAttr(initializer=paddle.nn.initializer.Constant(1.0))
+        bias_attr = paddle.ParamAttr(initializer=paddle.nn.initializer.Constant(0.0))
         return weight_attr, bias_attr
 
     def forward(self, x):
@@ -110,13 +110,13 @@ class PatchMerging(nn.Layer):
                                  bias_attr=b_attr_2)
 
     def _init_weights_layernorm(self):
-        weight_attr = paddle.ParamAttr(initializer=paddle.nn.initializer.Constant(1))
-        bias_attr = paddle.ParamAttr(initializer=paddle.nn.initializer.Constant(0))
+        weight_attr = paddle.ParamAttr(initializer=paddle.nn.initializer.Constant(1.0))
+        bias_attr = paddle.ParamAttr(initializer=paddle.nn.initializer.Constant(0.0))
         return weight_attr, bias_attr
 
     def _init_weights(self):
         weight_attr = paddle.ParamAttr(initializer=paddle.nn.initializer.TruncatedNormal(std=.02))
-        bias_attr = paddle.ParamAttr(initializer=paddle.nn.initializer.Constant(0))
+        bias_attr = paddle.ParamAttr(initializer=paddle.nn.initializer.Constant(0.0))
         return weight_attr, bias_attr
 
     def forward(self, x):
@@ -169,7 +169,7 @@ class Mlp(nn.Layer):
 
     def _init_weights(self):
         weight_attr = paddle.ParamAttr(initializer=paddle.nn.initializer.TruncatedNormal(std=.02))
-        bias_attr = paddle.ParamAttr(initializer=paddle.nn.initializer.Constant(0))
+        bias_attr = paddle.ParamAttr(initializer=paddle.nn.initializer.Constant(0.0))
         return weight_attr, bias_attr
 
     def forward(self, x):
@@ -250,7 +250,7 @@ class WindowAttention(nn.Layer):
 
     def _init_weights(self):
         weight_attr = paddle.ParamAttr(initializer=paddle.nn.initializer.TruncatedNormal(std=.02))
-        bias_attr = paddle.ParamAttr(initializer=paddle.nn.initializer.Constant(0))
+        bias_attr = paddle.ParamAttr(initializer=paddle.nn.initializer.Constant(0.0))
         return weight_attr, bias_attr
 
     def transpose_multihead(self, x):
@@ -351,7 +351,7 @@ class SwinTransformerBlock(nn.Layer):
 
     Attributes:
         dim: int, input dimension (channels)
-        input_resolution: int, input resoultion
+        input_resolution: tuple, input resoultion
         num_heads: int, number of attention heads
         windos_size: int, window size, default: 7
         shift_size: int, shift size for SW-MSA, default: 0
@@ -430,8 +430,8 @@ class SwinTransformerBlock(nn.Layer):
         self.register_buffer("attn_mask", attn_mask)
 
     def _init_weights_layernorm(self):
-        weight_attr = paddle.ParamAttr(initializer=paddle.nn.initializer.Constant(1))
-        bias_attr = paddle.ParamAttr(initializer=paddle.nn.initializer.Constant(0))
+        weight_attr = paddle.ParamAttr(initializer=paddle.nn.initializer.Constant(1.0))
+        bias_attr = paddle.ParamAttr(initializer=paddle.nn.initializer.Constant(0.0))
         return weight_attr, bias_attr
 
     def forward(self, x):
@@ -633,13 +633,13 @@ class SwinTransformer(nn.Layer):
                             bias_attr=b_attr_2)
 
     def _init_weights_layernorm(self):
-        weight_attr = paddle.ParamAttr(initializer=paddle.nn.initializer.Constant(1))
-        bias_attr = paddle.ParamAttr(initializer=paddle.nn.initializer.Constant(0))
+        weight_attr = paddle.ParamAttr(initializer=paddle.nn.initializer.Constant(1.0))
+        bias_attr = paddle.ParamAttr(initializer=paddle.nn.initializer.Constant(0.0))
         return weight_attr, bias_attr
 
     def _init_weights(self):
         weight_attr = paddle.ParamAttr(initializer=paddle.nn.initializer.TruncatedNormal(std=.02))
-        bias_attr = paddle.ParamAttr(initializer=paddle.nn.initializer.Constant(0))
+        bias_attr = paddle.ParamAttr(initializer=paddle.nn.initializer.Constant(0.0))
         return weight_attr, bias_attr
 
     def forward_features(self, x):

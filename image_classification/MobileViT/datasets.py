@@ -26,10 +26,14 @@ from paddle.io import DistributedBatchSampler
 from paddle.vision import transforms
 from paddle.vision import datasets
 from paddle.vision import image_load
-from auto_augment import auto_augment_policy_original
-from auto_augment import AutoAugment
+from augment import auto_augment_policy_original
+from augment import AutoAugment
+from augment import rand_augment_policy_original
+from augment import RandAugment
 from transforms import RandomHorizontalFlip
 from random_erasing import RandomErasing
+from multi_scale_sampler import MultiScaleSamplerDDP
+
 
 class ImageNet2012Dataset(Dataset):
     """Build ImageNet2012 dataset
@@ -69,9 +73,17 @@ class ImageNet2012Dataset(Dataset):
         return len(self.label_list)
 
     def __getitem__(self, index):
-        data = Image.open(self.img_path_list[index]).convert('RGB')
-        data = self.transform(data)
-        label = self.label_list[index]
+        if isinstance(index, (list, tuple)):
+            w, h, idx = index
+            w = int(w)
+            h = int(h)
+            data = Image.open(self.img_path_list[idx]).convert('RGB')
+            data = self.transform(data, image_size=(w, h))
+            label = self.label_list[idx]
+        else:
+            data = Image.open(self.img_path_list[index]).convert('RGB')
+            data = self.transform(data)
+            label = self.label_list[index]
 
         return data, label
 
@@ -100,12 +112,17 @@ def get_train_transforms(config):
         policy = auto_augment_policy_original()
         auto_augment = AutoAugment(policy)
         aug_op_list.append(auto_augment)
+    elif config.TRAIN.RAND_AUGMENT:
+        policy = rand_augment_policy_original()
+        rand_augment = RandAugment(policy)
+        aug_op_list.append(rand_augment)
     else:
         jitter = (float(config.TRAIN.COLOR_JITTER), ) * 3
         aug_op_list.append(transforms.ColorJitter(*jitter))
     # STEP3: other ops
     aug_op_list.append(transforms.ToTensor())
-    aug_op_list.append(transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]))
+    aug_op_list.append(transforms.Normalize(mean=config.DATA.IMAGENET_MEAN,
+                                            std=config.DATA.IMAGENET_STD))
     # STEP4: random erasing
     if config.TRAIN.RANDOM_ERASE_PROB > 0.:
         random_erasing = RandomErasing(prob=config.TRAIN.RANDOM_ERASE_PROB,
@@ -114,7 +131,8 @@ def get_train_transforms(config):
                                        num_splits=config.TRAIN.RANDOM_ERASE_SPLIT)
         aug_op_list.append(random_erasing)
     # Final: compose transforms and return
-    transforms_train = transforms.Compose(aug_op_list)
+    transforms_train = Compose(aug_op_list)
+    #transforms_train = transforms.Compose(aug_op_list)
     return transforms_train
 
 
@@ -133,14 +151,29 @@ def get_val_transforms(config):
     """
 
     scale_size = int(math.floor(config.DATA.IMAGE_SIZE / config.DATA.CROP_PCT))
-    transforms_val = transforms.Compose([
+    #transforms_val = transforms.Compose([
+    transforms_val = Compose([
         transforms.Resize(scale_size, interpolation='bicubic'),
         transforms.CenterCrop((config.DATA.IMAGE_SIZE, config.DATA.IMAGE_SIZE)),
         transforms.ToTensor(),
-        #transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+        transforms.Normalize(mean=config.DATA.IMAGENET_MEAN, std=config.DATA.IMAGENET_STD),
     ])
     return transforms_val
+
+
+class Compose():
+    def __init__(self, transforms):
+        self.transforms = transforms
+
+    def __call__(self, image, image_size=None):
+        if image_size is not None:
+            if isinstance(self.transforms[1], transforms.RandomResizedCrop):
+                self.transforms[1] = transforms.RandomResizedCrop(
+                    image_size, scale=(0.05, 1.0), interpolation='bicubic')
+        for t in self.transforms:
+            image = t(image)
+        return image
+
 
 
 def get_dataset(config, mode='train'):
@@ -159,11 +192,13 @@ def get_dataset(config, mode='train'):
         if mode == 'train':
             dataset = datasets.Cifar10(mode=mode, transform=get_train_transforms(config))
         else:
+            mode = 'test'
             dataset = datasets.Cifar10(mode=mode, transform=get_val_transforms(config))
     elif config.DATA.DATASET == "cifar100":
         if mode == 'train':
             dataset = datasets.Cifar100(mode=mode, transform=get_train_transforms(config))
         else:
+            mode = 'test'
             dataset = datasets.Cifar100(mode=mode, transform=get_val_transforms(config))
     elif config.DATA.DATASET == "imagenet2012":
         if mode == 'train':
@@ -200,12 +235,22 @@ def get_dataloader(config, dataset, mode='train', multi_process=False):
         batch_size = config.DATA.BATCH_SIZE_EVAL
 
     if multi_process is True:
-        sampler = DistributedBatchSampler(dataset,
-                                          batch_size=batch_size,
-                                          shuffle=(mode == 'train'))
-        dataloader = DataLoader(dataset,
-                                batch_sampler=sampler,
-                                num_workers=config.DATA.NUM_WORKERS)
+        if config.TRAIN.MULTI_SCALE_SAMPLER_DDP:
+            sampler = MultiScaleSamplerDDP(base_image_width=config.DATA.IMAGE_SIZE,
+                                           base_image_height=config.DATA.IMAGE_SIZE,
+                                           base_batch_size=batch_size,
+                                           num_data_samples=len(dataset),
+                                           is_training=(mode == 'train'))
+            dataloader = DataLoader(dataset,
+                                    batch_sampler=sampler,
+                                    num_workers=config.DATA.NUM_WORKERS)
+        else:
+            sampler = DistributedBatchSampler(dataset,
+                                              batch_size=batch_size,
+                                              shuffle=(mode == 'train'))
+            dataloader = DataLoader(dataset,
+                                    batch_sampler=sampler,
+                                    num_workers=config.DATA.NUM_WORKERS)
     else:
         dataloader = DataLoader(dataset,
                                 batch_size=batch_size,

@@ -5,12 +5,11 @@ MODEL:
     BACKBONE: "resnet50"
     NUM_QUERIES: 100
     TRANS:
-        NUM_ENCODER_LAYERS: 6
-        NUM_DECODER_LAYERS: 6
-        MLP_DIM: 2048
-        HIDDEN_SIZE: 256
+        NUM_ENCODERS: 6
+        NUM_DECODERS: 6
+        EMBED_DIM: 256
+        MLP_RATIO: 8.0
         NUM_HEADS: 8
-
 TRAIN:
     BASE_LR: 1e-4
     GRAD_CLIP: 0.1

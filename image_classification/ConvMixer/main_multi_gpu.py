@@ -1,4 +1,4 @@
-#  Copyright (c) 2021 PPViT Authors. All Rights Reserved.
+# Copyright (c) 2021 PPViT Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -29,13 +29,11 @@ from datasets import get_dataloader
 from datasets import get_dataset
 from utils import AverageMeter
 from utils import WarmupCosineScheduler
-from utils import get_exclude_from_weight_decay_fn
 from config import get_config
 from config import update_config
 from mixup import Mixup
 from losses import LabelSmoothingCrossEntropyLoss
 from losses import SoftTargetCrossEntropyLoss
-from losses import DistillationLoss
 from convmixer import build_convmixer as build_model
 
 
@@ -47,7 +45,9 @@ def get_arguments():
     parser.add_argument('-batch_size', type=int, default=None)
     parser.add_argument('-image_size', type=int, default=None)
     parser.add_argument('-data_path', type=str, default=None)
+    parser.add_argument('-output', type=str, default=None)
     parser.add_argument('-ngpus', type=int, default=None)
+    parser.add_argument('-num_classes', type=int, default=None)
     parser.add_argument('-pretrained', type=str, default=None)
     parser.add_argument('-resume', type=str, default=None)
     parser.add_argument('-last_epoch', type=int, default=None)
@@ -104,11 +104,9 @@ def train(dataloader,
         local_logger: logger for local process/gpu, default: None
         master_logger: logger for main process, default: None
     Returns:
-        train_loss_meter.avg: float, average loss on current process/gpu
-        train_acc_meter.avg: float, average top1 accuracy on current process/gpu
-        master_train_loss_meter.avg: float, average loss on all processes/gpus
-        master_train_acc_meter.avg: float, average top1 accuracy on all processes/gpus
-        train_time: float, training time
+        train_loss_meter.avg
+        train_acc_meter.avg
+        train_time
     """
     model.train()
     train_loss_meter = AverageMeter()
@@ -320,14 +318,18 @@ def main_worker(*args):
 
     # STEP 2: Create train and val dataloader
     dataset_train, dataset_val = args[1], args[2]
-    dataloader_train = get_dataloader(config, dataset_train, 'train', True)
+    # Create training dataloader
+    if not config.EVAL:
+        dataloader_train = get_dataloader(config, dataset_train, 'train', True)
+        total_batch_train = len(dataloader_train)
+        local_logger.info(f'----- Total # of train batch (single gpu): {total_batch_train}')
+        if local_rank == 0:
+            master_logger.info(f'----- Total # of train batch (single gpu): {total_batch_train}')
+    # Create validation dataloader
     dataloader_val = get_dataloader(config, dataset_val, 'test', True)
-    total_batch_train = len(dataloader_train)
     total_batch_val = len(dataloader_val)
-    local_logger.info(f'----- Total # of train batch (single gpu): {total_batch_train}')
     local_logger.info(f'----- Total # of val batch (single gpu): {total_batch_val}')
     if local_rank == 0:
-        master_logger.info(f'----- Total # of train batch (single gpu): {total_batch_train}')
         master_logger.info(f'----- Total # of val batch (single gpu): {total_batch_val}')
 
     # STEP 3: Define Mixup function
@@ -356,11 +358,11 @@ def main_worker(*args):
     # set lr according to batch size and world size (hacked from Swin official code and modified for CSwin)
     if config.TRAIN.LINEAR_SCALED_LR is not None:
         linear_scaled_lr = (
-            config.TRAIN.BASE_LR * config.DATA.BATCH_SIZE) / config.TRAIN.LINEAR_SCALED_LR
+            config.TRAIN.BASE_LR * config.DATA.BATCH_SIZE * world_size) / config.TRAIN.LINEAR_SCALED_LR
         linear_scaled_warmup_start_lr = (
-            config.TRAIN.WARMUP_START_LR * config.DATA.BATCH_SIZE) / config.TRAIN.LINEAR_SCALED_LR
+            config.TRAIN.WARMUP_START_LR * config.DATA.BATCH_SIZE * world_size) / config.TRAIN.LINEAR_SCALED_LR
         linear_scaled_end_lr = (
-            config.TRAIN.END_LR * config.DATA.BATCH_SIZE) / config.TRAIN.LINEAR_SCALED_LR
+            config.TRAIN.END_LR * config.DATA.BATCH_SIZE * world_size) / config.TRAIN.LINEAR_SCALED_LR
     
         if config.TRAIN.ACCUM_ITER > 1:
             linear_scaled_lr = linear_scaled_lr * config.TRAIN.ACCUM_ITER
@@ -421,8 +423,8 @@ def main_worker(*args):
             weight_decay=config.TRAIN.WEIGHT_DECAY,
             epsilon=config.TRAIN.OPTIMIZER.EPS,
             grad_clip=clip,
-            apply_decay_param_fun=get_exclude_from_weight_decay_fn([
-                'absolute_pos_embed', 'relative_position_bias_table']),
+            #apply_decay_param_fun=get_exclude_from_weight_decay_fn([
+            #    'absolute_pos_embed', 'relative_position_bias_table']),
             )
     else:
         local_logger.fatal(f"Unsupported Optimizer: {config.TRAIN.OPTIMIZER.NAME}.")
@@ -566,7 +568,10 @@ def main():
         os.makedirs(config.SAVE, exist_ok=True)
 
     # get dataset and start DDP
-    dataset_train = get_dataset(config, mode='train')
+    if not config.EVAL:
+        dataset_train = get_dataset(config, mode='train')
+    else:
+        dataset_train = None
     dataset_val = get_dataset(config, mode='val')
     config.NGPUS = len(paddle.static.cuda_places()) if config.NGPUS == -1 else config.NGPUS
     dist.spawn(main_worker, args=(config, dataset_train, dataset_val, ), nprocs=config.NGPUS)
